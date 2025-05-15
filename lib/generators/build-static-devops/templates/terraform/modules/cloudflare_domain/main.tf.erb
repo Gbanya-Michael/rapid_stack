@@ -18,32 +18,55 @@ locals {
     startswith(domain, "www.") ? domain : "www.${domain}"
   ][0]
 
-  # Cloudflare Pages project domain
+  # Cloudflare Pages project domain (ensure it matches exactly)
   pages_domain = "${var.app_name}.pages.dev"
+
+  # Full subdomain name if provided
+  full_subdomain = var.subdomain != null ? "${var.subdomain.name}.${var.domains[0]}" : null
+
+  # Determine if we're working with a subdomain
+  is_subdomain = var.subdomain != null
+
+  # Domains to create zones for (empty set if subdomain, otherwise root domains)
+  domains_to_create = local.is_subdomain ? toset([]) : toset(local.root_domains)
+
+  # Ensure project name is clean (no special characters or spaces)
+  clean_project_name = replace(var.app_name, "/[^a-z0-9-]/", "-")
 }
 
-# Create zones for each domain
+# Get existing zone for subdomain case
+data "cloudflare_zone" "existing" {
+  count = local.is_subdomain ? 1 : 0
+  zone_id = var.subdomain.zone_id
+}
+
+# Create zones for root domains (only if not a subdomain case)
 resource "cloudflare_zone" "domains" {
-  for_each    = toset(local.root_domains)
+  for_each    = local.domains_to_create
   account_id  = var.account_id
   zone        = each.value
   plan        = "free"
 }
 
-# Create CNAME record for root domain (@) to point to www
+# Get the zone ID to use for DNS records
+locals {
+  zone_id = local.is_subdomain ? data.cloudflare_zone.existing[0].id : cloudflare_zone.domains[local.root_domains[0]].id
+}
+
+# Create CNAME record for root domain (@) to point to www (only if not a subdomain case)
 resource "cloudflare_record" "root_cname" {
-  for_each = cloudflare_zone.domains
-  zone_id  = each.value.id
+  count    = local.is_subdomain ? 0 : 1
+  zone_id  = local.zone_id
   name     = "@"
-  content  = "www.${each.value.zone}"
+  content  = "www.${local.root_domains[0]}"
   type     = "CNAME"
   proxied  = true
 }
 
-# Create CNAME record for www to point to Cloudflare Pages
+# Create CNAME record for www to point to Cloudflare Pages (only if not a subdomain case)
 resource "cloudflare_record" "www_cname" {
-  for_each = cloudflare_zone.domains
-  zone_id  = each.value.id
+  count    = local.is_subdomain ? 0 : 1
+  zone_id  = local.zone_id
   name     = "www"
   content  = local.pages_domain
   type     = "CNAME"
@@ -53,13 +76,32 @@ resource "cloudflare_record" "www_cname" {
 # Create Cloudflare Pages project
 resource "cloudflare_pages_project" "frontend" {
   account_id = var.account_id
-  name       = var.app_name
+  name       = local.clean_project_name
   production_branch = "main"
 }
 
 # Add custom domain to Pages project (root domain)
 resource "cloudflare_pages_domain" "root_domain" {
+  count        = local.is_subdomain ? 0 : 1
   account_id   = var.account_id
   project_name = cloudflare_pages_project.frontend.name
   domain       = local.www_domain
+}
+
+# Create subdomain DNS record if subdomain is provided
+resource "cloudflare_record" "subdomain" {
+  count    = var.subdomain != null ? 1 : 0
+  zone_id  = var.subdomain.zone_id
+  name     = var.subdomain.name
+  type     = "CNAME"
+  content  = "${local.clean_project_name}.pages.dev"
+  proxied  = true
+}
+
+# Attach subdomain to Cloudflare Pages project if provided
+resource "cloudflare_pages_domain" "subdomain" {
+  count        = var.subdomain != null ? 1 : 0
+  account_id   = var.account_id
+  project_name = cloudflare_pages_project.frontend.name
+  domain       = local.full_subdomain
 }

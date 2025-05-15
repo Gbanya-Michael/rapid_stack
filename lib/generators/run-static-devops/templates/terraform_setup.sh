@@ -79,13 +79,35 @@ cloudflare_api_key=$(get_config_value "$GLOBAL_CONFIG_FILE" "$PROJECT_CONFIG_FIL
 cloudflare_account_id=$(get_config_value "$GLOBAL_CONFIG_FILE" "$PROJECT_CONFIG_FILE" "cloudflare_account_id" "config")
 domains=$(get_config_value "$GLOBAL_CONFIG_FILE" "$PROJECT_CONFIG_FILE" "domains" "config")
 
-# Write the captured values into terraform.tfvars
-cat << EOF > static-devops/terraform/terraform.tfvars
+# Check if subdomain configuration exists
+if [ -n "$(get_config_value "$PROJECT_CONFIG_FILE" "" "cloudflare_zone_id" "config")" ]; then
+  subdomain_name=$(get_config_value "$PROJECT_CONFIG_FILE" "" "subdomain_name" "config")
+  subdomain_zone_id=$(get_config_value "$PROJECT_CONFIG_FILE" "" "cloudflare_zone_id" "config")
+  subdomain_type=$(get_config_value "$PROJECT_CONFIG_FILE" "" "subdomain_type" "config")
+  subdomain_value=$(get_config_value "$PROJECT_CONFIG_FILE" "" "subdomain_value" "config")
+  
+  # Write the captured values into terraform.tfvars with subdomain
+  cat << EOF > static-devops/terraform/terraform.tfvars
+app_name = "${app_name}"
+cloudflare_api_key = "${cloudflare_api_key}"
+cloudflare_account_id = "${cloudflare_account_id}"
+domains = [$(echo $domains | sed 's/,/","/g' | sed 's/.*/"&"/')]
+subdomain = {
+  name    = "${subdomain_name}"
+  zone_id = "${subdomain_zone_id}"
+  type    = "${subdomain_type}"
+  value   = "${subdomain_value}"
+}
+EOF
+else
+  # Write the captured values into terraform.tfvars without subdomain
+  cat << EOF > static-devops/terraform/terraform.tfvars
 app_name = "${app_name}"
 cloudflare_api_key = "${cloudflare_api_key}"
 cloudflare_account_id = "${cloudflare_account_id}"
 domains = [$(echo $domains | sed 's/,/","/g' | sed 's/.*/"&"/')]
 EOF
+fi
 
 echo "✅ terraform.tfvars has been created successfully!" > /dev/tty
 echo "📁 Location: static-devops/terraform/terraform.tfvars" > /dev/tty

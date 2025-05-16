@@ -18,8 +18,14 @@ locals {
     startswith(domain, "www.") ? domain : "www.${domain}"
   ][0]
 
+  # Clean project name (remove any special characters and ensure it's lowercase)
+  clean_project_name = lower(replace(var.app_name, "/[^a-z0-9-]/", "-"))
+
+  # Generate a unique project name with timestamp
+  unique_project_name = "${local.clean_project_name}-${formatdate("YYYYMMDDHHmmss", timestamp())}"
+
   # Cloudflare Pages project domain (ensure it matches exactly)
-  pages_domain = "${var.app_name}.pages.dev"
+  pages_domain = "${local.unique_project_name}.pages.dev"
 
   # Full subdomain name if provided
   full_subdomain = var.subdomain != null ? "${var.subdomain.name}.${var.domains[0]}" : null
@@ -29,9 +35,6 @@ locals {
 
   # Domains to create zones for (empty set if subdomain, otherwise root domains)
   domains_to_create = local.is_subdomain ? toset([]) : toset(local.root_domains)
-
-  # Ensure project name is clean (no special characters or spaces)
-  clean_project_name = replace(var.app_name, "/[^a-z0-9-]/", "-")
 }
 
 # Get existing zone for subdomain case
@@ -76,7 +79,7 @@ resource "cloudflare_record" "www_cname" {
 # Create Cloudflare Pages project
 resource "cloudflare_pages_project" "frontend" {
   account_id = var.account_id
-  name       = local.clean_project_name
+  name       = local.unique_project_name
   production_branch = "main"
 }
 
@@ -94,7 +97,7 @@ resource "cloudflare_record" "subdomain" {
   zone_id  = var.subdomain.zone_id
   name     = var.subdomain.name
   type     = "CNAME"
-  content  = "${local.clean_project_name}.pages.dev"
+  content  = local.pages_domain
   proxied  = true
 }
 
